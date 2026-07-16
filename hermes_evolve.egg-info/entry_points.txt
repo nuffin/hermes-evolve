@@ -1,2 +1,0 @@
-[hermes_agent.plugins]
-evolve = hermes_evolve:register
