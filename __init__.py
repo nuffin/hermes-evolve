@@ -147,6 +147,7 @@ def _cmd_now() -> str:
 
 def _loaded_plugin_modules() -> list[tuple[str, str]]:
     plugin_home = str(Path.home() / ".hermes" / "plugins")
+    plugin_home_real = str(Path(plugin_home).resolve())
     hermes_agent_root = ""
     try:
         import hermes_cli
@@ -159,10 +160,18 @@ def _loaded_plugin_modules() -> list[tuple[str, str]]:
         if not hasattr(mod, "__file__") or mod.__file__ is None:
             continue
         fpath = mod.__file__
-        if fpath.startswith(plugin_home):
+        fpath_real = str(Path(fpath).resolve())
+
+        # User plugins: under ~/.hermes/plugins/ (or symlinked there)
+        if fpath.startswith(plugin_home) or fpath_real.startswith(plugin_home_real):
             result.append((mod_name, fpath))
-        elif hermes_agent_root and fpath.startswith(hermes_agent_root):
-            if fpath[len(hermes_agent_root):].startswith("/plugins/"):
+            continue
+        # Bundled plugins: under <repo>/plugins/<name>/
+        if hermes_agent_root:
+            rel = fpath[len(hermes_agent_root):] if fpath.startswith(hermes_agent_root) else ""
+            if not rel:
+                rel = fpath_real[len(hermes_agent_root):] if fpath_real.startswith(hermes_agent_root) else ""
+            if rel.startswith("/plugins/"):
                 result.append((mod_name, fpath))
     return result
 
