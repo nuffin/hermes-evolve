@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-evolve"
+version = "1.0.0"
+description = "Hot-reload Hermes plugins and rebuild system prompt — /evolve now"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.entry-points."hermes_agent.plugins"]
+evolve = "hermes_evolve:register"
+
+[tool.setuptools.packages.find]
+include = ["hermes_evolve*"]
