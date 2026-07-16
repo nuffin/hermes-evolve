@@ -2,14 +2,19 @@
 
 Usage:
   /evolve now    — reload all loaded plugin modules, re-register, clear caches,
-                   force system prompt rebuild on next message
-  /evolve status — show loaded plugins and what /evolve now will affect
+                   clear all stored system prompts → forces rebuild on next message
+  /evolve status — show loaded plugin modules and what /evolve now will affect
+
+Works across CLI, TUI, Desktop, and Gateway — all modes share the same
+state.db, and clearing all stored system_prompts triggers a rebuild on
+every active session's next turn.
 """
 
 from __future__ import annotations
 
 import importlib
 import logging
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,7 +23,6 @@ logger = logging.getLogger("hermes-evolve")
 
 
 def register(ctx: Any) -> None:
-    """Register /evolve command."""
     ctx.register_command(
         "evolve",
         _cmd_evolve,
@@ -32,41 +36,40 @@ def register(ctx: Any) -> None:
 
 
 def _cmd_evolve(raw_args: str) -> str | None:
-    """Dispatch: /evolve now | /evolve status"""
     cmd = raw_args.strip().lower()
     if cmd == "status":
         return _cmd_status()
     if cmd == "now":
         return _cmd_now()
-    return "Usage:\n  /evolve now    — hot-reload all plugins and trigger system prompt rebuild\n  /evolve status — show loaded plugins and what will be affected"
+    return "Usage:\n  /evolve now    — hot-reload all plugins and rebuild system prompt\n  /evolve status — show loaded plugins and what will be affected"
 
 
 # ── status ──────────────────────────────────────────────────
 
 
 def _cmd_status() -> str:
-    """Show all loaded plugin modules that /evolve now would reload."""
     loaded = _loaded_plugin_modules()
     lines = ["## Evolve — Status", "", f"{len(loaded)} plugin module(s) loaded:", ""]
     for mod_name, filepath in loaded:
         mtime = ""
         try:
-            mtime = Path(filepath).stat().st_mtime
             from datetime import datetime
-            mtime = datetime.fromtimestamp(mtime).strftime("%H:%M:%S")
+            mtime = datetime.fromtimestamp(Path(filepath).stat().st_mtime).strftime("%H:%M:%S")
         except Exception:
             pass
-        prefix = "🔄" if _has_disk_changes(mod_name, filepath) else "  "
-        lines.append(f"  {prefix} {mod_name}  ({mtime})" if mtime else f"  {prefix} {mod_name}")
+        tag = "🔄" if _has_disk_changes(filepath) else "  "
+        line = f"  {tag} {mod_name}"
+        if mtime:
+            line += f"  ({mtime})"
+        lines.append(line)
 
-    # Also show which plugins would be re-registered
     try:
         from hermes_cli.plugins import get_plugin_manager
         mgr = get_plugin_manager()
-        plugin_names = [k for k, v in mgr._plugins.items() if v.enabled and v.module]
+        names = sorted(k for k, v in mgr._plugins.items() if v.enabled and v.module)
         lines.append("")
-        lines.append(f"{len(plugin_names)} plugin(s) will be re-registered:")
-        for name in sorted(plugin_names):
+        lines.append(f"{len(names)} plugin(s) will be re-registered:")
+        for name in names:
             lines.append(f"    {name}")
     except Exception:
         pass
@@ -78,12 +81,11 @@ def _cmd_status() -> str:
 
 
 def _cmd_now() -> str:
-    """Full reload cycle."""
     parts: list[str] = []
     reloaded = 0
 
-    # ── Step 1: Reload ALL loaded plugin modules ──
-    for mod_name, _filepath in _loaded_plugin_modules():
+    # ── Step 1: Reload all loaded plugin modules ──
+    for mod_name, _ in _loaded_plugin_modules():
         mod = sys.modules.get(mod_name)
         if mod is None or not hasattr(mod, "__file__") or mod.__file__ is None:
             continue
@@ -117,41 +119,26 @@ def _cmd_now() -> str:
     except Exception as e:
         parts.append(f"  ⚠ model_tools: {e}")
 
-    # ── Step 4: Clear in-memory cached system prompt ──
-    cleared_memory = False
+    # ── Step 4: Clear ALL stored system prompts ──
+    # Works across CLI/TUI/Desktop/Gateway — all share state.db.
+    # Empty string triggers _restore_or_build_system_prompt to rebuild.
+    cleared = 0
     try:
-        from hermes_cli.plugins import get_plugin_manager
-        mgr = get_plugin_manager()
-        cli = getattr(mgr, "_cli_ref", None)
-        if cli is not None and hasattr(cli, "agent") and cli.agent is not None:
-            cli.agent._cached_system_prompt = None
-            cleared_memory = True
-            parts.append("  🔄 agent._cached_system_prompt cleared")
-    except Exception:
-        pass
-
-    # ── Step 5: Clear stored system prompt from session DB ──
-    if cleared_memory:
-        try:
-            from hermes_cli.plugins import get_plugin_manager
-            from hermes_state import SessionDB
-            cli = getattr(get_plugin_manager(), "_cli_ref", None)
-            if cli is not None and hasattr(cli, "agent") and cli.agent is not None:
-                sid = cli.agent.session_id
-                if sid:
-                    db = SessionDB()
-                    db.update_system_prompt(sid, "")
-                    parts.append(f"  🔄 session DB system_prompt cleared ({sid[:12]}...)")
-        except Exception as e:
-            parts.append(f"  ⚠ session DB: {e}")
-
-    if not cleared_memory:
-        parts.append("  ⚠ Could not clear cached prompt. Use /new to rebuild.")
+        from hermes_state import DEFAULT_DB_PATH
+        conn = sqlite3.connect(str(DEFAULT_DB_PATH))
+        conn.execute("PRAGMA journal_mode=WAL")
+        cur = conn.execute("UPDATE sessions SET system_prompt = '' WHERE system_prompt IS NOT NULL AND system_prompt != ''")
+        cleared = cur.rowcount
+        conn.commit()
+        conn.close()
+        parts.append(f"  🔄 {cleared} stored system prompt(s) cleared")
+    except Exception as e:
+        parts.append(f"  ⚠ stored prompts: {e}")
 
     return (
         f"## Evolve — {reloaded} module(s) reloaded\n\n"
         + "\n".join(parts)
-        + "\n\n✅ System prompt will rebuild on your next message."
+        + f"\n\n✅ {cleared} session(s) will rebuild system prompt on their next message."
     )
 
 
@@ -159,11 +146,6 @@ def _cmd_now() -> str:
 
 
 def _loaded_plugin_modules() -> list[tuple[str, str]]:
-    """Return (module_name, filepath) for all loaded plugin modules.
-
-    Covers both user plugins (~/.hermes/plugins/) and bundled plugins
-    (<repo>/plugins/), excluding built-in and stdlib.
-    """
     plugin_home = str(Path.home() / ".hermes" / "plugins")
     hermes_agent_root = ""
     try:
@@ -177,33 +159,17 @@ def _loaded_plugin_modules() -> list[tuple[str, str]]:
         if not hasattr(mod, "__file__") or mod.__file__ is None:
             continue
         fpath = mod.__file__
-
-        # User plugins: under ~/.hermes/plugins/
         if fpath.startswith(plugin_home):
             result.append((mod_name, fpath))
-            continue
-
-        # Bundled plugins: under <repo>/plugins/<name>/ (skip core agent modules)
-        if hermes_agent_root and fpath.startswith(hermes_agent_root):
-            rel = fpath[len(hermes_agent_root):]
-            if rel.startswith("/plugins/"):
+        elif hermes_agent_root and fpath.startswith(hermes_agent_root):
+            if fpath[len(hermes_agent_root):].startswith("/plugins/"):
                 result.append((mod_name, fpath))
-                continue
-
     return result
 
 
-def _has_disk_changes(mod_name: str, filepath: str) -> bool:
-    """Check if module has been modified on disk since import."""
+def _has_disk_changes(filepath: str) -> bool:
     try:
-        import os
-        mod = sys.modules.get(mod_name)
-        if mod is None:
-            return False
-        disk_mtime = os.path.getmtime(filepath)
-        # Python doesn't store import time, so we approximate: any file
-        # modified in the last hour is potentially changed
-        import time
-        return (time.time() - disk_mtime) < 3600
+        import os, time
+        return (time.time() - os.path.getmtime(filepath)) < 3600
     except Exception:
         return False
