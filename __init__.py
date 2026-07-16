@@ -101,18 +101,9 @@ def _cmd_now() -> str:
 
     # ── Step 2: Re-discover + re-register all plugins ──
     try:
-        from hermes_cli.plugins import discover_plugins, invoke_hook
+        from hermes_cli.plugins import discover_plugins
         discover_plugins(force=True)
         parts.append("  🔄 plugins re-discovered + re-registered")
-
-        # Fire pre_command hook to restore _cli_ref for plugins that
-        # stash it (e.g. session-titler needs it for /retitle).
-        from hermes_cli.plugins import get_plugin_manager
-        mgr = get_plugin_manager()
-        cli = getattr(mgr, "_cli_ref", None)
-        if cli is not None:
-            invoke_hook("pre_command", cli=cli, command_name="", raw_args="")
-            parts.append("  🔄 pre_command hook fired (CLI ref restored)")
     except Exception as e:
         parts.append(f"  ⚠ plugin rediscovery: {e}")
 
