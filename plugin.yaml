@@ -1,0 +1,5 @@
+name: hermes-evolve
+version: 1.0.0
+description: "Hot-reload plugins and evolve the system prompt in-place — /evolve now"
+author: "Hauzer S. Lee"
+hooks: []
