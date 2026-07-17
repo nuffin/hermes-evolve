@@ -1,3 +1,8 @@
 """Hermes plugin: hermes-evolve — thin shell for dual symlink + pip install."""
 
-from hermes_evolve import *  # noqa: F401, F403
+try:
+    from hermes_evolve import register  # pip-installed
+except ImportError:
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from hermes_evolve import register  # symlink / directory plugin
