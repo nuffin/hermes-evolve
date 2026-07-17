@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "hermes-evolve"
 version = "1.0.0"
 description = "Hot-reload Hermes plugins and rebuild system prompt — /evolve now"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
