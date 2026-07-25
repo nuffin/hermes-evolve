@@ -84,5 +84,5 @@ MIT
 
 | Role | Repo | PyPI |
 |------|------|------|
-| Plugin code (this repo) | `hermes-evolve` | — |
-| Pip wrapper | `hermes-evolve-pip` | `hermes-evolve` |
+| Plugin code (this repo) | [hermes-evolve](https://github.com/nuffin/hermes-evolve) | — |
+| Pip wrapper | [hermes-evolve-pip](https://github.com/nuffin/hermes-evolve-pip) | [hermes-evolve](https://pypi.org/project/hermes-evolve/) |
