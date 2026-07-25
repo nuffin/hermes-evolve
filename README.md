@@ -78,3 +78,11 @@ No test suite — verification is manual against a running Hermes instance.
 ## License
 
 MIT
+
+
+## Repositories
+
+| Role | Repo | PyPI |
+|------|------|------|
+| Plugin code (this repo) | `hermes-evolve` | — |
+| Pip wrapper | `hermes-evolve-pip` | `hermes-evolve` |
