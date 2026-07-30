@@ -12,7 +12,7 @@ every active session's next turn.
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 import logging
 import sqlite3
 import sys
@@ -58,7 +58,7 @@ def _cmd_status() -> str:
         except Exception:
             pass
         tag = "🔄" if _has_disk_changes(filepath) else "  "
-        line = f"  {tag} {mod_name}"
+        line = f"  {tag} {filepath}"
         if mtime:
             line += f"  ({mtime})"
         lines.append(line)
@@ -85,16 +85,28 @@ def _cmd_now() -> str:
     reloaded = 0
 
     # ── Step 1: Reload all loaded plugin modules ──
-    for mod_name, _ in _loaded_plugin_modules():
+    for mod_name, filepath in _loaded_plugin_modules():
         mod = sys.modules.get(mod_name)
         if mod is None or not hasattr(mod, "__file__") or mod.__file__ is None:
             continue
         try:
-            importlib.reload(mod)
+            # Use spec_from_file_location like the core does — loads by
+            # real file path, not by module name.  Avoids the misleading
+            # "hermes_plugins.write_guard" name in error messages when the
+            # directory is actually named "write-guard".
+            spec = importlib.util.spec_from_file_location(
+                mod.__name__,
+                mod.__file__,
+                submodule_search_locations=[str(Path(mod.__file__).parent)],
+            )
+            if spec is None or spec.loader is None:
+                parts.append(f"  ❌ {filepath}: cannot create module spec")
+                continue
+            spec.loader.exec_module(mod)
             reloaded += 1
-            parts.append(f"  🔄 {mod_name}")
+            parts.append(f"  🔄 {filepath}")
         except Exception as e:
-            parts.append(f"  ❌ {mod_name}: {e}")
+            parts.append(f"  ❌ {filepath}: {e}")
 
     if reloaded == 0:
         parts.append("  (no modules to reload)")
