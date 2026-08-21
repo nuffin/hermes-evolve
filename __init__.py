@@ -131,27 +131,72 @@ def _cmd_now() -> str:
     except Exception as e:
         parts.append(f"  ⚠ model_tools: {e}")
 
-    # ── Step 4: Clear ALL stored system prompts ──
-    # Works across CLI/TUI/Desktop/Gateway — all share state.db.
-    # Empty string triggers _restore_or_build_system_prompt to rebuild.
+    # ── Step 4: Invalidate ALL stored system-prompt snapshots ──
+    # Current Hermes versions store prompts out-of-line in system_prompts and
+    # reference them through sessions.system_prompt_hash. Older versions store
+    # the text directly in sessions.system_prompt. Handle both layouts.
     cleared = 0
+    storage_mode = "unknown"
     try:
         from hermes_state import DEFAULT_DB_PATH
-        conn = sqlite3.connect(str(DEFAULT_DB_PATH))
-        conn.execute("PRAGMA journal_mode=WAL")
-        cur = conn.execute("UPDATE sessions SET system_prompt = '' WHERE system_prompt IS NOT NULL AND system_prompt != ''")
-        cleared = cur.rowcount
-        conn.commit()
-        conn.close()
-        parts.append(f"  🔄 {cleared} stored system prompt(s) cleared")
+        cleared, storage_mode = _clear_stored_system_prompts(DEFAULT_DB_PATH)
+        parts.append(
+            f"  🔄 {cleared} stored system-prompt snapshot(s) invalidated "
+            f"({storage_mode} storage)"
+        )
     except Exception as e:
         parts.append(f"  ⚠ stored prompts: {e}")
 
     return (
         f"## Evolve — {reloaded} module(s) reloaded\n\n"
         + "\n".join(parts)
-        + f"\n\n✅ {cleared} session(s) will rebuild system prompt on their next message."
+        + f"\n\n✅ {cleared} stored system-prompt snapshot(s) will rebuild "
+        "when their sessions next run or resume."
     )
+
+
+def _clear_stored_system_prompts(database_path: Path) -> tuple[int, str]:
+    """Invalidate prompt snapshots for either supported session-db layout."""
+    conn = sqlite3.connect(str(database_path))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(sessions)")
+        }
+        if "system_prompt_hash" in columns:
+            cur = conn.execute(
+                "UPDATE sessions "
+                "SET system_prompt = NULL, system_prompt_hash = NULL "
+                "WHERE system_prompt_hash IS NOT NULL "
+                "OR (system_prompt IS NOT NULL AND system_prompt != '')"
+            )
+            has_prompt_store = conn.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'system_prompts'"
+            ).fetchone()
+            if has_prompt_store:
+                conn.execute(
+                    "DELETE FROM system_prompts "
+                    "WHERE NOT EXISTS ("
+                    "SELECT 1 FROM sessions "
+                    "WHERE sessions.system_prompt_hash = system_prompts.hash"
+                    ")"
+                )
+            storage_mode = "hash-backed"
+        elif "system_prompt" in columns:
+            cur = conn.execute(
+                "UPDATE sessions SET system_prompt = '' "
+                "WHERE system_prompt IS NOT NULL AND system_prompt != ''"
+            )
+            storage_mode = "inline"
+        else:
+            cleared = 0
+            conn.commit()
+            return cleared, "none"
+        conn.commit()
+        return cur.rowcount, storage_mode
+    finally:
+        conn.close()
 
 
 # ── module discovery ────────────────────────────────────────
