@@ -24,6 +24,15 @@ def load_plugin_module():
     return module
 
 
+
+def load_invalidation_module():
+    source = Path(__file__).resolve().parents[1] / "prompt_invalidation.py"
+    spec = importlib.util.spec_from_file_location("hermes_evolve_invalidation_test", source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 class StoredPromptInvalidationTests(unittest.TestCase):
     def test_command_reports_hash_backed_invalidation(self):
         module = load_plugin_module()
@@ -70,8 +79,8 @@ class StoredPromptInvalidationTests(unittest.TestCase):
             ):
                 result = module._cmd_now()
 
-            self.assertIn("1 stored system-prompt snapshot(s) invalidated", result)
-            self.assertIn("hash-backed storage", result)
+            self.assertIn("state.db: 1 snapshot reference(s) invalidated (hash-backed)", result)
+            self.assertIn("stock core", result)
             self.assertIn("will rebuild when their sessions next run or resume", result)
             self.assertEqual(model_tools._tool_defs_cache, {})
             self.assertEqual(model_tools.registry._generation, 8)
@@ -102,7 +111,7 @@ class StoredPromptInvalidationTests(unittest.TestCase):
             connection.commit()
             connection.close()
 
-            cleared, mode = module._clear_stored_system_prompts(database_path)
+            cleared, mode = load_invalidation_module()._clear_stored_system_prompts_sqlite(database_path)
 
             self.assertEqual((cleared, mode), (2, "hash-backed"))
             connection = sqlite3.connect(database_path)
@@ -124,7 +133,7 @@ class StoredPromptInvalidationTests(unittest.TestCase):
             )
             connection.close()
 
-            cleared, mode = module._clear_stored_system_prompts(database_path)
+            cleared, mode = load_invalidation_module()._clear_stored_system_prompts_sqlite(database_path)
             self.assertEqual((cleared, mode), (0, "hash-backed"))
 
     def test_hash_backed_schema_without_prompt_store_is_supported(self):
@@ -145,7 +154,7 @@ class StoredPromptInvalidationTests(unittest.TestCase):
             connection.commit()
             connection.close()
 
-            cleared, mode = module._clear_stored_system_prompts(database_path)
+            cleared, mode = load_invalidation_module()._clear_stored_system_prompts_sqlite(database_path)
 
             self.assertEqual((cleared, mode), (1, "hash-backed"))
             connection = sqlite3.connect(database_path)
@@ -171,7 +180,7 @@ class StoredPromptInvalidationTests(unittest.TestCase):
             connection.commit()
             connection.close()
 
-            cleared, mode = module._clear_stored_system_prompts(database_path)
+            cleared, mode = load_invalidation_module()._clear_stored_system_prompts_sqlite(database_path)
 
             self.assertEqual((cleared, mode), (0, "none"))
 
@@ -194,7 +203,7 @@ class StoredPromptInvalidationTests(unittest.TestCase):
             connection.commit()
             connection.close()
 
-            cleared, mode = module._clear_stored_system_prompts(database_path)
+            cleared, mode = load_invalidation_module()._clear_stored_system_prompts_sqlite(database_path)
 
             self.assertEqual((cleared, mode), (1, "inline"))
             connection = sqlite3.connect(database_path)
